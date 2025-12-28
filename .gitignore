@@ -1,0 +1,62 @@
+# Python
+venv/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# Distribution / packaging
+build/
+dist/
+*.egg-info/
+
+# ML Models (large files)
+models/
+*.safetensors
+*.ckpt
+*.pth
+*.pt
+*.bin
+
+# Storage (user data)
+storage/uploads/*
+storage/jobs/*
+storage/outputs/*
+
+# Keep directory structure
+!storage/uploads/.gitkeep
+!storage/jobs/.gitkeep
+!storage/outputs/.gitkeep
+
+# Environment
+.env
+.venv
+env/
+ENV/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Database
+*.db
+*.sqlite
+*.sqlite3
+
+# Temporary files
+*.tmp
+*.temp
+
+# Hugging Face cache (stored in ~/.cache)
+.cache/

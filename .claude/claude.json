@@ -1,0 +1,9 @@
+{
+  "project": {
+    "name": "3D Art Generator",
+    "description": "A project for generating 3D art"
+  },
+  "settings": {
+    "model": "claude-sonnet-4-5-20250929"
+  }
+}
