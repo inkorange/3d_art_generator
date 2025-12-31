@@ -147,10 +147,33 @@ python ml_pipeline/poc_painterly.py storage/uploads/test_landscape.jpg
 - ✅ Responsive design with Tailwind CSS
 - ✅ Dark mode support
 
+**Phase 4: Depth Layer Separation**
+- ✅ User-configurable layer export toggle
+- ✅ Adjustable edge feathering (1-5 pixels)
+- ✅ Database schema updates
+- ✅ Full API and frontend integration
+
+**Phase 5: Advanced ML Features** (In Progress - 50% Complete)
+- ✅ **Professional Style Presets** - 10 pre-configured artistic styles
+  - Oil Painting, Watercolor, Impressionist, Acrylic, Abstract Expressionist
+  - Pastel, Gouache, Palette Knife, Chinese Brush, Vintage Poster
+  - Optimized prompts and parameters per style
+  - Dynamic dropdown in frontend with live descriptions
+- ✅ **ControlNet Canny Edge Conditioning** - Optional structure preservation
+  - Preserves facial features, architecture, and composition
+  - Configurable conditioning scale (0.0-1.0)
+  - ~5-10% slower but much better quality for complex images
+- ✅ **Semantic Subject Detection** - Improved layer separation
+  - Detects people, animals, vehicles, and objects
+  - Each subject stays together on same layer
+  - 12 object classes supported
+- 🚧 Custom post-processing filters (planned)
+- 🚧 Depth-weighted randomness (planned)
+- 🚧 Seed jitter for variations (planned)
+
 ### Planned 🚧
 - 🚧 WebSocket real-time updates (replace polling)
-- 🚧 Multiple style presets library
-- 🚧 High-resolution upscaling (300-600 DPI)
+- 🚧 High-resolution upscaling (300-600 DPI) - Phase 6
 - 🚧 Batch generation (1-3 variations)
 - 🚧 Job history and management
 - 🚧 Settings persistence
@@ -171,6 +194,10 @@ python ml_pipeline/poc_painterly.py storage/uploads/test_landscape.jpg
 - [PHASE_1_COMPLETE.md](PHASE_1_COMPLETE.md) - Phase 1 completion summary
 - [PHASE_2_COMPLETE.md](PHASE_2_COMPLETE.md) - Phase 2 completion summary
 - [PHASE_3_COMPLETE.md](PHASE_3_COMPLETE.md) - Phase 3 completion summary
+- [PHASE_4_COMPLETE.md](PHASE_4_COMPLETE.md) - Phase 4 completion summary
+- [PHASE_5_PROGRESS.md](PHASE_5_PROGRESS.md) - Phase 5 progress report
+- [PHASE_5_STYLE_PRESETS.md](PHASE_5_STYLE_PRESETS.md) - Style presets feature
+- [PHASE_5_CONTROLNET.md](PHASE_5_CONTROLNET.md) - ControlNet edge conditioning
 
 ### Technical Documentation
 - [TEST_RESULTS.md](TEST_RESULTS.md) - Phase 1 test results and benchmarks
@@ -182,8 +209,14 @@ python ml_pipeline/poc_painterly.py storage/uploads/test_landscape.jpg
 - [x] **Phase 1**: Foundation & Proof of Concept ✅ COMPLETE
 - [x] **Phase 2**: Backend API & Job Queue ✅ COMPLETE
 - [x] **Phase 3**: Frontend UI ✅ COMPLETE
-- [ ] **Phase 4**: Advanced Layer Features
-- [ ] **Phase 5**: Advanced ML Features
+- [x] **Phase 4**: Advanced Layer Features ✅ COMPLETE
+- [ ] **Phase 5**: Advanced ML Features 🚧 IN PROGRESS (50% - High-priority features complete)
+  - [x] Professional Style Presets
+  - [x] ControlNet Edge Conditioning
+  - [x] Semantic Subject Detection
+  - [ ] Post-processing Filters (optional)
+  - [ ] Depth-weighted Randomness (optional)
+  - [ ] Seed Jitter (optional)
 - [ ] **Phase 6**: High-Resolution Pipeline
 - [ ] **Phase 7**: Polish & Optimization
 - [ ] **Phase 8**: Advanced 3D Features (Optional)

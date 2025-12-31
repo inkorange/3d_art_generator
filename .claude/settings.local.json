@@ -21,7 +21,9 @@
       "Bash(npm --prefix frontend run build)",
       "Bash(npx:*)",
       "Bash(./validate.sh:*)",
-      "Bash(sqlite3:*)"
+      "Bash(sqlite3:*)",
+      "Bash(PYTHONPATH=/Users/christopherwest/web/3d_art_generator/backend:$PYTHONPATH python -m uvicorn:*)",
+      "Bash(npm run dev:*)"
     ]
   }
 }

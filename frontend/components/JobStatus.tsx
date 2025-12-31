@@ -27,12 +27,32 @@ export function JobStatus({ job }: JobStatusProps) {
     return `${mins}m ${secs}s`;
   };
 
-  // Calculate estimated progress based on mode and elapsed time
+  // Calculate estimated progress based on mode, size, and elapsed time
   const getProgress = () => {
     if (job.status !== 'processing') return 0;
 
-    // Expected times based on mode
-    const expectedTime = job.mode === 'photo-realistic' ? 7 : 40;
+    // Base times for 1024px (balanced size)
+    let baseTime = job.mode === 'photo-realistic' ? 7 : 40;
+
+    // Add AI inpainting time if enabled (photo-realistic only)
+    // Includes model loading (~20-30s) + inference (~50-70s) = ~80-100s total
+    if (job.mode === 'photo-realistic' && job.use_inpainting) {
+      baseTime += 90; // Stable Diffusion inpainting adds ~90 seconds (model load + inference)
+    }
+
+    // Add ControlNet time if enabled (painterly only)
+    if (job.mode === 'painterly' && job.use_controlnet) {
+      baseTime *= 1.1; // ControlNet adds ~10% processing time
+    }
+
+    // Scale factor based on max_size (processing time scales roughly with pixel count)
+    // 256px = 0.25x, 512px = 0.5x, 1024px = 1x, 1536px = 2x, 2048px = 4x
+    const sizeScaleFactor = Math.pow(job.max_size / 1024, 1.5);
+
+    // Adjust for layer export (if disabled, saves ~30% of photo-realistic time)
+    const exportFactor = (!job.export_layers && job.mode === 'photo-realistic') ? 0.7 : 1.0;
+
+    const expectedTime = baseTime * sizeScaleFactor * exportFactor;
     const progress = Math.min((elapsed / expectedTime) * 100, 95);
     return progress;
   };
@@ -89,6 +109,18 @@ export function JobStatus({ job }: JobStatusProps) {
             <span className="font-medium text-gray-900 dark:text-white capitalize">
               {job.painterly_style}
             </span>
+          </div>
+        )}
+        {job.mode === 'photo-realistic' && job.use_inpainting && (
+          <div className="flex justify-between">
+            <span className="text-gray-600 dark:text-gray-400">AI Background Fill:</span>
+            <span className="font-medium text-blue-600 dark:text-blue-400">Enabled (+90s)</span>
+          </div>
+        )}
+        {job.mode === 'painterly' && job.use_controlnet && (
+          <div className="flex justify-between">
+            <span className="text-gray-600 dark:text-gray-400">ControlNet:</span>
+            <span className="font-medium text-blue-600 dark:text-blue-400">Enabled (+10%)</span>
           </div>
         )}
         {job.status === 'processing' && (

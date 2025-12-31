@@ -11,6 +11,16 @@ interface ResultsProps {
 
 export function Results({ job, onReset }: ResultsProps) {
   const [selectedLayer, setSelectedLayer] = useState<number>(0);
+  const [rotateX, setRotateX] = useState<number>(20);
+  const [rotateY, setRotateY] = useState<number>(0);
+  const [isDragging, setIsDragging] = useState<boolean>(false);
+  const [dragStart, setDragStart] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  // Zoom controls for preview
+  const [previewZoom, setPreviewZoom] = useState<number>(1);
+  const [previewPan, setPreviewPan] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
+  const [isPanningPreview, setIsPanningPreview] = useState<boolean>(false);
+  const [panStartPreview, setPanStartPreview] = useState<{ x: number; y: number }>({ x: 0, y: 0 });
 
   if (!job.result_manifest) {
     return (
@@ -41,15 +51,100 @@ export function Results({ job, onReset }: ResultsProps) {
 
   const downloadAll = () => {
     const files = getDownloadableFiles();
-    files.forEach((filename) => {
-      const url = apiClient.getDownloadUrl(job.id, filename);
-      const link = document.createElement('a');
-      link.href = url;
-      link.download = filename;
-      document.body.appendChild(link);
-      link.click();
-      document.body.removeChild(link);
+    files.forEach((filename, index) => {
+      setTimeout(() => {
+        const url = apiClient.getDownloadUrl(job.id, filename);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+      }, index * 200); // 200ms delay between each download
     });
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    setIsDragging(true);
+    setDragStart({ x: e.clientX, y: e.clientY });
+  };
+
+  const handleMouseMove = (e: React.MouseEvent) => {
+    if (!isDragging) return;
+    const deltaX = e.clientX - dragStart.x;
+    const deltaY = e.clientY - dragStart.y;
+    setRotateY(rotateY + deltaX * 0.5);
+    setRotateX(Math.max(-90, Math.min(90, rotateX - deltaY * 0.5)));
+    setDragStart({ x: e.clientX, y: e.clientY });
+  };
+
+  const handleMouseUp = () => {
+    setIsDragging(false);
+  };
+
+  const resetRotation = () => {
+    setRotateX(20);
+    setRotateY(0);
+  };
+
+  const handlePreviewWheel = (e: React.WheelEvent) => {
+    e.preventDefault();
+
+    const rect = e.currentTarget.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    const mouseY = e.clientY - rect.top;
+
+    // Calculate mouse position relative to current pan and zoom
+    const relativeX = (mouseX - previewPan.x) / previewZoom;
+    const relativeY = (mouseY - previewPan.y) / previewZoom;
+
+    // Zoom factor
+    const zoomDelta = e.deltaY > 0 ? 0.9 : 1.1;
+    const newZoom = Math.max(1, Math.min(10, previewZoom * zoomDelta));
+
+    // Adjust pan to keep mouse position fixed
+    const newPanX = mouseX - relativeX * newZoom;
+    const newPanY = mouseY - relativeY * newZoom;
+
+    setPreviewZoom(newZoom);
+    setPreviewPan({ x: newPanX, y: newPanY });
+  };
+
+  const handlePreviewMouseDown = (e: React.MouseEvent) => {
+    if (previewZoom > 1) {
+      setIsPanningPreview(true);
+      setPanStartPreview({ x: e.clientX - previewPan.x, y: e.clientY - previewPan.y });
+    }
+  };
+
+  const handlePreviewMouseMove = (e: React.MouseEvent) => {
+    if (isPanningPreview && previewZoom > 1) {
+      setPreviewPan({
+        x: e.clientX - panStartPreview.x,
+        y: e.clientY - panStartPreview.y,
+      });
+    }
+  };
+
+  const handlePreviewMouseUp = () => {
+    setIsPanningPreview(false);
+  };
+
+  const resetPreviewZoom = () => {
+    setPreviewZoom(1);
+    setPreviewPan({ x: 0, y: 0 });
+  };
+
+  const handleStackKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'ArrowUp') {
+      e.preventDefault();
+      setSelectedLayer((prev) => Math.max(0, prev - 1));
+      resetPreviewZoom();
+    } else if (e.key === 'ArrowDown') {
+      e.preventDefault();
+      setSelectedLayer((prev) => Math.min(layers.length - 1, prev + 1));
+      resetPreviewZoom();
+    }
   };
 
   return (
@@ -74,44 +169,145 @@ export function Results({ job, onReset }: ResultsProps) {
           <div>
             <div className="flex items-center justify-between mb-3">
               <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">
-                Layer Preview
+                Layer Preview {previewZoom > 1 && `(${previewZoom.toFixed(1)}x)`}
               </h3>
-              <span className="text-xs text-gray-500 dark:text-gray-400">
-                {layers[selectedLayer].description} ({layers[selectedLayer].coverage_percent.toFixed(1)}% coverage)
-              </span>
+              <div className="flex items-center gap-3">
+                {previewZoom > 1 && (
+                  <button
+                    onClick={resetPreviewZoom}
+                    className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
+                  >
+                    Reset Zoom
+                  </button>
+                )}
+                <span className="text-xs text-gray-500 dark:text-gray-400">
+                  {layers[selectedLayer].description} ({layers[selectedLayer].coverage_percent.toFixed(1)}% coverage)
+                </span>
+              </div>
             </div>
-            <div className="relative aspect-video w-full overflow-hidden rounded-lg bg-gray-100 dark:bg-gray-700 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHJlY3Qgd2lkdGg9IjEwIiBoZWlnaHQ9IjEwIiBmaWxsPSIjY2NjIi8+PHJlY3QgeD0iMTAiIHk9IjEwIiB3aWR0aD0iMTAiIGhlaWdodD0iMTAiIGZpbGw9IiNjY2MiLz48L3N2Zz4=')]">
-              <Image
-                src={apiClient.getDownloadUrl(job.id, layers[selectedLayer].name)}
-                alt={layers[selectedLayer].description}
-                fill
-                className="object-contain"
-                unoptimized
-              />
+            <div
+              className={`relative aspect-video w-full overflow-hidden rounded-lg bg-gray-100 dark:bg-gray-700 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PHJlY3Qgd2lkdGg9IjEwIiBoZWlnaHQ9IjEwIiBmaWxsPSIjY2NjIi8+PHJlY3QgeD0iMTAiIHk9IjEwIiB3aWR0aD0iMTAiIGhlaWdodD0iMTAiIGZpbGw9IiNjY2MiLz48L3N2Zz4=')] ${
+                previewZoom > 1 ? 'cursor-grab active:cursor-grabbing' : 'cursor-zoom-in'
+              }`}
+              onWheel={handlePreviewWheel}
+              onMouseDown={handlePreviewMouseDown}
+              onMouseMove={handlePreviewMouseMove}
+              onMouseUp={handlePreviewMouseUp}
+              onMouseLeave={handlePreviewMouseUp}
+            >
+              <div
+                style={{
+                  transform: `translate(${previewPan.x}px, ${previewPan.y}px) scale(${previewZoom})`,
+                  transformOrigin: '0 0',
+                  width: '100%',
+                  height: '100%',
+                  position: 'relative',
+                }}
+              >
+                <Image
+                  src={apiClient.getDownloadUrl(job.id, layers[selectedLayer].name)}
+                  alt={layers[selectedLayer].description}
+                  fill
+                  className="object-contain pointer-events-none"
+                  unoptimized
+                />
+              </div>
+
+              {/* Zoom hint overlay */}
+              {previewZoom === 1 && (
+                <div className="absolute bottom-2 right-2 bg-black/60 text-white text-xs px-3 py-1 rounded-full pointer-events-none">
+                  Scroll to zoom
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Layer Selector */}
-          <div className="grid grid-cols-2 gap-2">
-            {layers.map((layer, index) => (
+          {/* 3D Layer Stack Visualization */}
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                3D Layer Stack
+              </h3>
               <button
-                key={layer.name}
-                onClick={() => setSelectedLayer(index)}
-                className={`p-3 rounded-lg border-2 text-left transition-all ${
-                  selectedLayer === index
-                    ? 'border-blue-500 bg-blue-50 dark:bg-blue-900/20'
-                    : 'border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
-                }`}
+                onClick={resetRotation}
+                className="text-xs text-blue-600 dark:text-blue-400 hover:underline"
               >
-                <div className="font-medium text-sm text-gray-900 dark:text-white">
-                  {layer.description}
-                </div>
-                <div className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                  Depth: {layer.depth_range[0]}-{layer.depth_range[1]}
-                  {layer.is_opaque && ' • Opaque'}
-                </div>
+                Reset View
               </button>
-            ))}
+            </div>
+
+            <div
+              className="relative w-full h-96 overflow-hidden rounded-lg bg-gradient-to-b from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800 cursor-grab active:cursor-grabbing focus:outline-none select-none"
+              onMouseDown={handleMouseDown}
+              onMouseMove={handleMouseMove}
+              onMouseUp={handleMouseUp}
+              onMouseLeave={handleMouseUp}
+              onKeyDown={handleStackKeyDown}
+              tabIndex={0}
+              style={{ perspective: '1200px', WebkitUserSelect: 'none', userSelect: 'none' }}
+            >
+              <div
+                className="absolute inset-0 flex items-center justify-center"
+                style={{
+                  transformStyle: 'preserve-3d',
+                  transform: `rotateX(${rotateX}deg) rotateY(${rotateY}deg)`,
+                  transition: isDragging ? 'none' : 'transform 0.3s ease-out',
+                }}
+              >
+                {layers.map((layer, index) => {
+                  const spacing = 40;
+                  const translateZ = index * spacing;
+                  const isSelected = selectedLayer === index;
+
+                  return (
+                    <div
+                      key={layer.name}
+                      className={`absolute cursor-pointer transition-all duration-300 ${
+                        isSelected ? 'ring-4 ring-blue-500 ring-offset-2 ring-offset-transparent' : ''
+                      }`}
+                      style={{
+                        width: '280px',
+                        height: '200px',
+                        transform: `translateZ(${translateZ}px)`,
+                        transformStyle: 'preserve-3d',
+                      }}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setSelectedLayer(index);
+                      }}
+                    >
+                      {/* Layer card */}
+                      <div className="relative w-full h-full rounded-lg overflow-hidden shadow-2xl hover:ring-2 hover:ring-white hover:ring-offset-2 hover:ring-offset-transparent transition-all duration-200">
+                        <div className="absolute inset-0">
+                          <Image
+                            src={apiClient.getDownloadUrl(job.id, layer.name)}
+                            alt={layer.description}
+                            fill
+                            className="object-contain"
+                            unoptimized
+                          />
+                        </div>
+
+                        {/* Layer label */}
+                        <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/80 to-transparent p-3">
+                          <div className="font-medium text-white text-sm">
+                            {layer.description}
+                          </div>
+                          <div className="text-xs text-gray-300 mt-1">
+                            Layer {index + 1} of {layers.length}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Instructions overlay */}
+              <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-black/60 text-white text-xs px-4 py-2 rounded-full pointer-events-none">
+                Drag to rotate • Click layer to select • ↑↓ arrows to cycle
+              </div>
+            </div>
           </div>
         </>
       )}
@@ -172,6 +368,10 @@ export function Results({ job, onReset }: ResultsProps) {
             <div>Job ID: {job.id}</div>
             <div>Mode: {job.mode}</div>
             <div>Layers: {job.num_layers}</div>
+            <div>Export Layers: {job.export_layers ? 'Yes' : 'No'}</div>
+            {job.export_layers && (
+              <div>Feather Radius: {job.feather_radius}px</div>
+            )}
             {job.mode === 'painterly' && (
               <>
                 <div>Style: {job.painterly_style}</div>
