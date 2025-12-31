@@ -72,6 +72,7 @@ async def create_job(
     filename: str = Form(...),
     mode: JobMode = Form(...),
     num_layers: int = Form(default=4),
+    max_size: int = Form(default=1024),
     painterly_style: Optional[str] = Form(default="oil painting"),
     painterly_strength: Optional[float] = Form(default=0.5),
     painterly_seed: Optional[int] = Form(default=42),
@@ -83,6 +84,8 @@ async def create_job(
         filename: Uploaded file name (from /upload endpoint)
         mode: Generation mode (photo-realistic or painterly)
         num_layers: Number of depth layers (2-5)
+        max_size: Maximum output dimension in pixels (256-2048, default 1024)
+                 512 = fast preview, 1024 = balanced, 2048 = high-res
         painterly_style: Style for painterly mode (oil painting, watercolor, etc.)
         painterly_strength: Transformation strength for painterly mode (0.0-1.0)
         painterly_seed: Random seed for painterly mode
@@ -105,6 +108,12 @@ async def create_job(
             detail="num_layers must be between 2 and 5",
         )
 
+    if max_size < 256 or max_size > 2048:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="max_size must be between 256 and 2048",
+        )
+
     if painterly_strength is not None and (painterly_strength < 0.0 or painterly_strength > 1.0):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -117,6 +126,7 @@ async def create_job(
         input_filename=filename,
         input_path=str(file_path),
         num_layers=num_layers,
+        max_size=max_size,
         painterly_style=painterly_style if mode == JobMode.PAINTERLY else None,
         painterly_strength=painterly_strength if mode == JobMode.PAINTERLY else None,
         painterly_seed=painterly_seed if mode == JobMode.PAINTERLY else None,
@@ -129,6 +139,11 @@ async def create_job(
 
     # Enqueue job for processing
     enqueue_job(job.id)
+
+    # Start processing immediately in a background thread
+    import threading
+    from app.workers.processor import process_job
+    threading.Thread(target=process_job, args=(job.id,), daemon=True).start()
 
     return JobResponse.model_validate(job)
 
@@ -190,7 +205,7 @@ async def get_job(
     return JobResponse.model_validate(job)
 
 
-@router.get("/{job_id}/download/{filename}")
+@router.api_route("/{job_id}/download/{filename}", methods=["GET", "HEAD"])
 async def download_result(
     job_id: str,
     filename: str,
@@ -248,7 +263,7 @@ async def download_result(
     return FileResponse(
         path=str(file_path),
         filename=filename,
-        media_type="application/octet-stream",
+        media_type="image/png",
     )
 
 

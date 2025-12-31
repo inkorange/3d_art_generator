@@ -6,8 +6,9 @@ A local software tool that generates high-definition 3D painterly images from ph
 
 **Phase 1: Foundation & Proof of Concept** ✅ **COMPLETE**
 **Phase 2: Backend API & Job Queue** ✅ **COMPLETE**
+**Phase 3: Frontend UI** ✅ **COMPLETE**
 
-See [TEST_RESULTS.md](TEST_RESULTS.md) for Phase 1 test results and [backend/README.md](backend/README.md) for API documentation.
+See [TEST_RESULTS.md](TEST_RESULTS.md) for Phase 1 test results, [backend/README.md](backend/README.md) for API documentation, and [frontend/README.md](frontend/README.md) for frontend usage.
 
 ## Quick Start
 
@@ -18,10 +19,37 @@ See [TEST_RESULTS.md](TEST_RESULTS.md) for Phase 1 test results and [backend/REA
 - 20GB free disk space
 - 16GB RAM
 
-### Option 1: Use Backend API (Recommended)
+### Option 1: Use Web UI (Recommended)
+
+**Start both services at once:**
+```bash
+npm run dev
+```
+
+This starts both backend and frontend in a single terminal!
+
+**Or start separately:**
+```bash
+# Terminal 1: Start backend
+cd backend
+./run.sh
+
+# Terminal 2: Start frontend
+cd frontend
+npm run dev
+```
+
+**Access:**
+- Frontend UI: `http://localhost:3000`
+- Backend API: `http://localhost:8000`
+- API Docs: `http://localhost:8000/docs`
+
+See [START_HERE.md](START_HERE.md) for detailed instructions.
+
+### Option 2: Use Backend API Only
 
 ```bash
-# 1. Start FastAPI backend
+# Start backend
 cd backend
 ./run.sh
 ```
@@ -30,9 +58,7 @@ Server runs on `http://localhost:8000`
 - API Docs: `http://localhost:8000/docs`
 - Test API: `./backend/test_api.sh`
 
-See [backend/README.md](backend/README.md) for full API documentation.
-
-### Option 2: Direct ML Pipeline
+### Option 3: Direct ML Pipeline
 
 ```bash
 # 1. Activate virtual environment
@@ -112,20 +138,42 @@ python ml_pipeline/poc_painterly.py storage/uploads/test_landscape.jpg
 - ✅ CORS support for frontend
 - ✅ Auto-generated API docs (Swagger/OpenAPI)
 
+**Phase 3: Frontend UI**
+- ✅ Next.js web interface with TypeScript
+- ✅ Drag-and-drop image upload
+- ✅ Real-time job status polling
+- ✅ Parameter controls (mode, layers, style, strength, seed)
+- ✅ Layer preview and downloads
+- ✅ Responsive design with Tailwind CSS
+- ✅ Dark mode support
+
 ### Planned 🚧
-- 🚧 Next.js web UI
-- 🚧 Multiple style presets (oil, watercolor, palette knife)
+- 🚧 WebSocket real-time updates (replace polling)
+- 🚧 Multiple style presets library
 - 🚧 High-resolution upscaling (300-600 DPI)
 - 🚧 Batch generation (1-3 variations)
+- 🚧 Job history and management
 - 🚧 Settings persistence
-- 🚧 WebSocket real-time updates
 
 ## Documentation
 
+### Quick Guides
+- [START_HERE.md](START_HERE.md) - Quick start guide with troubleshooting
+- [NPM_SCRIPTS.md](NPM_SCRIPTS.md) - All available npm scripts reference
+
+### Component Documentation
+- [Frontend README](frontend/README.md) - Frontend usage and development
+- [Backend API README](backend/README.md) - API documentation and endpoints
+- [ML Pipeline README](ml_pipeline/README.md) - ML pipeline details
+
+### Project Documentation
 - [PROJECT.md](.claude/PROJECT.md) - Complete project plan and architecture
+- [PHASE_1_COMPLETE.md](PHASE_1_COMPLETE.md) - Phase 1 completion summary
+- [PHASE_2_COMPLETE.md](PHASE_2_COMPLETE.md) - Phase 2 completion summary
+- [PHASE_3_COMPLETE.md](PHASE_3_COMPLETE.md) - Phase 3 completion summary
+
+### Technical Documentation
 - [TEST_RESULTS.md](TEST_RESULTS.md) - Phase 1 test results and benchmarks
-- [ML Pipeline README](ml_pipeline/README.md) - Phase 1 ML documentation
-- [Backend API README](backend/README.md) - Phase 2 API documentation
 - [OPAQUE_BACKGROUND_FEATURE.md](OPAQUE_BACKGROUND_FEATURE.md) - Opaque background implementation
 - [LAYER_SEPARATION_RESULTS.md](LAYER_SEPARATION_RESULTS.md) - Adaptive layer separation results
 
@@ -133,7 +181,7 @@ python ml_pipeline/poc_painterly.py storage/uploads/test_landscape.jpg
 
 - [x] **Phase 1**: Foundation & Proof of Concept ✅ COMPLETE
 - [x] **Phase 2**: Backend API & Job Queue ✅ COMPLETE
-- [ ] **Phase 3**: Frontend UI (Next)
+- [x] **Phase 3**: Frontend UI ✅ COMPLETE
 - [ ] **Phase 4**: Advanced Layer Features
 - [ ] **Phase 5**: Advanced ML Features
 - [ ] **Phase 6**: High-Resolution Pipeline
