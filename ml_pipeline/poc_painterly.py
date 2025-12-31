@@ -112,8 +112,8 @@ def load_sd_pipeline():
 def generate_painterly(image, pipe, style="oil painting", strength=0.5, seed=42):
     """Generate painterly version using img2img.
 
-    IMPORTANT: Uses moderate strength (0.5-0.55) with enhanced prompts
-    for strong painterly effect while maintaining subject content.
+    Creates cohesive, flowing painterly compositions that maintain artistic integrity
+    even at high strength values by using adaptive inference steps and guidance.
     """
     print(f"\n🎨 Generating painterly image (style: {style}, strength: {strength})...")
     start = time.time()
@@ -121,35 +121,42 @@ def generate_painterly(image, pipe, style="oil painting", strength=0.5, seed=42)
     # Set up generator for reproducibility
     generator = torch.Generator(device=device).manual_seed(seed)
 
-    # IMPROVED: Enhanced prompts for stronger painterly effect while preserving subject
-    # Focus on painting techniques and artistic style
-    prompt = f"{style}, thick paint strokes, impasto technique, canvas texture, painted by master artist, rich colors, visible brush marks"
+    # Enhanced prompts for cohesive artistic composition
+    # Emphasize smooth brushwork and artistic coherence
+    prompt = f"masterpiece {style}, smooth flowing brushstrokes, cohesive composition, harmonious colors, professional artwork, painterly aesthetic, artistic rendering, beautiful painting, expressive technique"
 
-    # IMPROVED: Negative prompt focuses on photographic qualities and artifacts
-    # This helps achieve painterly effect while keeping subject recognizable
-    negative_prompt = "photograph, camera, lens, photorealistic, smooth, digital, blurry, distorted, deformed, disfigured, ugly, bad anatomy, missing parts"
+    # Negative prompt prevents jagged artifacts and maintains flow
+    negative_prompt = "photograph, photorealistic, digital art, pixelated, jagged edges, fragmented, distorted, deformed, ugly, bad composition, chaotic, messy, artifacts, noise"
 
-    # Use moderate-high strength for visible painterly effect
-    # 0.5-0.55 gives strong artistic transformation while keeping content intact
-    actual_strength = min(strength, 0.55)  # Cap at 0.55 for enhanced painterly effect
+    # Adaptive parameters based on strength for better quality
+    # Higher strength = more steps and lower guidance for smoother transitions
+    if strength > 0.7:
+        num_steps = 50  # More steps for high abstraction
+        guidance = 6.0  # Lower guidance for more creative freedom
+    elif strength > 0.5:
+        num_steps = 40  # Balanced steps for moderate transformation
+        guidance = 7.0
+    else:
+        num_steps = 30  # Standard steps for subtle changes
+        guidance = 7.5
 
     with torch.no_grad():
         result = pipe(
             prompt=prompt,
             negative_prompt=negative_prompt,
             image=image,
-            strength=actual_strength,  # Lower strength preserves subject matter
-            guidance_scale=7.5,
-            num_inference_steps=30,  # Reduce for speed on Mac
+            strength=strength,  # Use full strength value
+            guidance_scale=guidance,
+            num_inference_steps=num_steps,
             generator=generator,
         ).images[0]
 
     print(f"✅ Painterly image generated in {time.time() - start:.2f}s")
-    print(f"   (Used strength: {actual_strength} for enhanced painterly effect)")
+    print(f"   (Steps: {num_steps}, Guidance: {guidance}, Strength: {strength})")
     return result
 
 
-def main(input_image_path, style="oil painting", strength=0.5, seed=42):
+def main(input_image_path, style="oil painting", strength=0.5, seed=42, max_size=768):
     """Main pipeline: Image -> Depth -> Painterly."""
     print("=" * 60)
     print("🎨 3D Painterly Image Generator - Proof of Concept")
@@ -159,13 +166,12 @@ def main(input_image_path, style="oil painting", strength=0.5, seed=42):
     print(f"\n📂 Loading input image: {input_image_path}")
     image = Image.open(input_image_path).convert("RGB")
 
-    # Resize to reasonable size for processing (Mac optimization)
-    max_size = 768
+    # Resize to specified max size for processing
     if max(image.size) > max_size:
         ratio = max_size / max(image.size)
         new_size = (int(image.width * ratio), int(image.height * ratio))
         image = image.resize(new_size, Image.Resampling.LANCZOS)
-        print(f"   Resized to {new_size} for efficient processing")
+        print(f"   Resized to {new_size} (max_size={max_size})")
 
     print(f"   Image size: {image.size}")
 
@@ -210,15 +216,21 @@ def main(input_image_path, style="oil painting", strength=0.5, seed=42):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python poc_painterly.py <input_image_path> [style] [strength] [seed]")
+        print("Usage: python poc_painterly.py <input_image_path> [style] [strength] [seed] [max_size]")
         print("\nExample:")
         print("  python poc_painterly.py test_photo.jpg")
         print("  python poc_painterly.py test_photo.jpg 'watercolor' 0.6 123")
+        print("  python poc_painterly.py test_photo.jpg 'oil painting' 0.5 42 512  # Fast preview")
         sys.exit(1)
 
     input_path = sys.argv[1]
     style = sys.argv[2] if len(sys.argv) > 2 else "oil painting"
     strength = float(sys.argv[3]) if len(sys.argv) > 3 else 0.5
     seed = int(sys.argv[4]) if len(sys.argv) > 4 else 42
+    max_size = int(sys.argv[5]) if len(sys.argv) > 5 else 768
 
-    main(input_path, style, strength, seed)
+    if max_size < 256 or max_size > 2048:
+        print("❌ max_size must be between 256 and 2048")
+        sys.exit(1)
+
+    main(input_path, style, strength, seed, max_size)

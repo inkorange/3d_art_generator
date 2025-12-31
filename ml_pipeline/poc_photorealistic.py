@@ -81,13 +81,82 @@ def generate_depth_map(image, processor, model):
     return depth_image, depth
 
 
-def separate_into_layers(image, depth_array, num_layers=3):
+def generate_subject_masks_grabcut(image, depth_array):
+    """
+    Use GrabCut algorithm to find the main foreground subject.
+    This works well for portraits and images with a clear subject.
+    """
+    print("\n👥 Detecting main subject using GrabCut...")
+    start = time.time()
+
+    # Convert PIL to numpy RGB
+    img_rgb = np.array(image.convert("RGB"))
+
+    # Initialize mask for GrabCut
+    mask = np.zeros(img_rgb.shape[:2], np.uint8)
+
+    # Background and foreground models (required by GrabCut)
+    bgd_model = np.zeros((1, 65), np.float64)
+    fgd_model = np.zeros((1, 65), np.float64)
+
+    # Define initial rectangle around likely subject area
+    # Use depth to find the closest regions as initial estimate
+    foreground_threshold = np.percentile(depth_array, 66)  # Top 33% closest
+    likely_fg = depth_array > foreground_threshold
+
+    # Find bounding box of likely foreground
+    rows = np.any(likely_fg, axis=1)
+    cols = np.any(likely_fg, axis=0)
+    if rows.any() and cols.any():
+        rmin, rmax = np.where(rows)[0][[0, -1]]
+        cmin, cmax = np.where(cols)[0][[0, -1]]
+
+        # Add margin
+        h, w = img_rgb.shape[:2]
+        margin = 20
+        rect = (
+            max(0, cmin - margin),
+            max(0, rmin - margin),
+            min(w - cmin, cmax - cmin + 2 * margin),
+            min(h - rmin, rmax - rmin + 2 * margin)
+        )
+
+        # Run GrabCut
+        try:
+            cv2.grabCut(img_rgb, mask, rect, bgd_model, fgd_model, 5, cv2.GC_INIT_WITH_RECT)
+
+            # Create binary mask where 0,2=background, 1,3=foreground
+            subject_mask = np.where((mask == 2) | (mask == 0), 0, 1).astype(np.int32)
+
+            # Check if we found a subject
+            subject_count = 1 if subject_mask.sum() > (depth_array.size * 0.05) else 0
+
+            print(f"✅ Subject detection completed in {time.time() - start:.2f}s")
+            print(f"   Found subject covering {subject_mask.sum() / depth_array.size * 100:.1f}% of image")
+
+            return subject_mask, subject_count
+
+        except Exception as e:
+            print(f"   GrabCut failed: {e}, falling back to no subject detection")
+            return np.zeros_like(depth_array, dtype=np.int32), 0
+    else:
+        print(f"   Could not find foreground region, skipping subject detection")
+        return np.zeros_like(depth_array, dtype=np.int32), 0
+
+
+def separate_into_layers(image, depth_array, num_layers=3, subject_mask=None):
     """
     Separate image into depth-based layers with alpha transparency.
-    Uses adaptive percentile-based thresholding for better distribution.
+    Uses semantic segmentation to keep subjects together on the same layer.
 
     IMPORTANT: Background layer (Layer 1) is fully opaque with blurred fallback
     to prevent transparent holes when viewed from angles in physical prints.
+
+    Args:
+        image: Input PIL Image
+        depth_array: Depth map as numpy array
+        num_layers: Number of layers to create
+        subject_mask: Optional semantic segmentation mask where each subject has unique ID
     """
     print(f"\n🔪 Separating into {num_layers} depth layers...")
     start = time.time()
@@ -103,8 +172,7 @@ def separate_into_layers(image, depth_array, num_layers=3):
     layers = []
     layer_info = []
 
-    # IMPROVED: Use percentile-based thresholding for better distribution
-    # This ensures each layer gets a more even distribution of pixels
+    # IMPROVED: Combine depth percentiles with subject-aware layering
     percentiles = np.linspace(0, 100, num_layers + 1)
     thresholds = np.percentile(depth_array, percentiles)
 
@@ -112,16 +180,53 @@ def separate_into_layers(image, depth_array, num_layers=3):
     print(f"   Min: {depth_array.min()}, Max: {depth_array.max()}")
     print(f"   Percentile thresholds: {[int(t) for t in thresholds]}")
 
+    # If we have subject masks, assign each subject to a layer based on its median depth
+    subject_to_layer = {}
+    if subject_mask is not None and subject_mask.max() > 0:
+        print(f"   Assigning {int(subject_mask.max())} subjects to layers...")
+        for subject_id in range(1, int(subject_mask.max()) + 1):
+            subject_pixels = depth_array[subject_mask == subject_id]
+            if len(subject_pixels) > 0:
+                median_depth = np.median(subject_pixels)
+                # Find which layer this median depth belongs to
+                assigned_layer = 0
+                for i in range(num_layers):
+                    if median_depth >= thresholds[i] and (i == num_layers - 1 or median_depth < thresholds[i + 1]):
+                        assigned_layer = i
+                        break
+                subject_to_layer[subject_id] = assigned_layer
+                print(f"      Subject {subject_id}: median depth {median_depth:.1f} -> Layer {assigned_layer + 1}")
+
     for i in range(num_layers):
         # Use percentile-based ranges instead of equal bins
         range_start = int(thresholds[i])
         range_end = int(thresholds[i + 1])
 
-        # For last layer, include the max value
+        # Start with depth-based mask
         if i == num_layers - 1:
-            mask = ((depth_array >= range_start) & (depth_array <= range_end)).astype(np.uint8) * 255
+            depth_mask = ((depth_array >= range_start) & (depth_array <= range_end))
         else:
-            mask = ((depth_array >= range_start) & (depth_array < range_end)).astype(np.uint8) * 255
+            depth_mask = ((depth_array >= range_start) & (depth_array < range_end))
+
+        # SUBJECT-AWARE MODIFICATION: Keep subjects together
+        # If a subject's median depth assigns it to this layer, include ALL of it
+        # If a subject belongs to another layer, remove it from this depth mask
+        if subject_mask is not None and len(subject_to_layer) > 0:
+            for subject_id, assigned_layer in subject_to_layer.items():
+                subject_region = (subject_mask == subject_id)
+                if assigned_layer == i:
+                    # This subject belongs to THIS layer - force include entire subject
+                    depth_mask = depth_mask | subject_region
+                else:
+                    # This subject belongs to a DIFFERENT layer - remove it from this layer
+                    # Only remove it if there's significant overlap (>10% of subject in this depth range)
+                    overlap = depth_mask & subject_region
+                    overlap_ratio = np.sum(overlap) / np.sum(subject_region) if np.sum(subject_region) > 0 else 0
+                    if overlap_ratio > 0.1:  # More than 10% overlap
+                        # Subject split across layers - remove it from wrong layer
+                        depth_mask = depth_mask & ~subject_region
+
+        mask = depth_mask.astype(np.uint8) * 255
 
         # Calculate coverage for reporting
         coverage = (mask > 0).sum() / mask.size * 100
@@ -132,26 +237,46 @@ def separate_into_layers(image, depth_array, num_layers=3):
 
         # SPECIAL HANDLING FOR BACKGROUND LAYER (Layer 1)
         if i == 0:  # Background layer
-            # Start with blurred image as base
+            # Background layer shows the actual background sharply,
+            # and fills areas that will be covered by other layers with blur
             layer = np.zeros((img_array.shape[0], img_array.shape[1], 4), dtype=np.uint8)
-            layer[:, :, :3] = blurred_img  # Use blurred image as base
 
-            # Apply extra smoothing to the blend mask for smoother transitions
-            # This creates a gradual blend between sharp background and blur
-            blend_feather_radius = 10  # Much larger feather for smooth transition
-            mask_blend = cv2.GaussianBlur(mask_feathered, (21, 21), blend_feather_radius)
+            # Start with full blurred image
+            layer[:, :, :3] = blurred_img
 
-            # Overlay sharp background where mask is active
-            mask_3d = np.stack([mask_blend] * 3, axis=2) / 255.0
+            # Create inverse mask - everything NOT in foreground/midground layers
+            # This means: blur everything except what's actually in this background layer
+            foreground_midground_mask = np.zeros_like(mask, dtype=bool)
+            if subject_mask is not None and len(subject_to_layer) > 0:
+                # Mark all pixels that belong to other layers (foreground/midground subjects)
+                for subject_id, assigned_layer in subject_to_layer.items():
+                    if assigned_layer > i:  # Layers in front of background
+                        foreground_midground_mask |= (subject_mask == subject_id)
+
+            # Also add depth-based pixels from other layers
+            for j in range(i + 1, num_layers):
+                if j == num_layers - 1:
+                    other_layer_mask = ((depth_array >= thresholds[j]) & (depth_array <= thresholds[j + 1]))
+                else:
+                    other_layer_mask = ((depth_array >= thresholds[j]) & (depth_array < thresholds[j + 1]))
+                foreground_midground_mask |= other_layer_mask
+
+            # Apply smoothing for gradual transition
+            blend_feather_radius = 10
+            foreground_blur = foreground_midground_mask.astype(np.uint8) * 255
+            foreground_blur = cv2.GaussianBlur(foreground_blur, (21, 21), blend_feather_radius)
+
+            # Where the actual background is, show it sharply
+            background_mask_3d = np.stack([mask_feathered] * 3, axis=2) / 255.0
             layer[:, :, :3] = (
-                layer[:, :, :3] * (1 - mask_3d) +  # Blurred regions
-                img_array[:, :, :3] * mask_3d       # Sharp background regions
+                layer[:, :, :3] * (1 - background_mask_3d) +  # Blurred fill
+                img_array[:, :, :3] * background_mask_3d      # Sharp actual background
             ).astype(np.uint8)
 
             # Background layer is FULLY OPAQUE (no transparency)
             layer[:, :, 3] = 255
 
-            print(f"   Layer {i+1} (Background): OPAQUE with blurred fallback")
+            print(f"   Layer {i+1} (Background): OPAQUE with blurred fill for removed foreground")
         else:
             # Other layers use standard alpha transparency
             layer = img_array.copy()
@@ -195,7 +320,7 @@ def save_layer_manifest(layer_info, job_id):
     return manifest_path
 
 
-def main(input_image_path, num_layers=3):
+def main(input_image_path, num_layers=3, max_size=1024):
     """Main pipeline: Image -> Depth -> Layers (no AI transformation)."""
     print("=" * 60)
     print("🎨 Photo-Realistic Depth Layer Generator")
@@ -205,13 +330,12 @@ def main(input_image_path, num_layers=3):
     print(f"\n📂 Loading input image: {input_image_path}")
     image = Image.open(input_image_path).convert("RGB")
 
-    # Resize to reasonable size for processing
-    max_size = 1024
+    # Resize to specified max size for processing
     if max(image.size) > max_size:
         ratio = max_size / max(image.size)
         new_size = (int(image.width * ratio), int(image.height * ratio))
         image = image.resize(new_size, Image.Resampling.LANCZOS)
-        print(f"   Resized to {new_size} for efficient processing")
+        print(f"   Resized to {new_size} (max_size={max_size})")
 
     print(f"   Image size: {image.size}")
 
@@ -235,8 +359,11 @@ def main(input_image_path, num_layers=3):
     elif device.type == "cuda":
         torch.cuda.empty_cache()
 
-    # Step 2: Separate into layers (NO AI transformation - use original photo)
-    layers, layer_info = separate_into_layers(image, depth_array, num_layers)
+    # Step 1.5: Detect main subject using GrabCut
+    subject_mask, subject_count = generate_subject_masks_grabcut(image, depth_array)
+
+    # Step 2: Separate into layers with subject-aware processing
+    layers, layer_info = separate_into_layers(image, depth_array, num_layers, subject_mask)
 
     # Step 3: Save composite (full image with alpha)
     composite_path = OUTPUT_DIR / "03_composite_full.png"
@@ -270,17 +397,23 @@ def main(input_image_path, num_layers=3):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python poc_photorealistic.py <input_image_path> [num_layers]")
+        print("Usage: python poc_photorealistic.py <input_image_path> [num_layers] [max_size]")
         print("\nExample:")
         print("  python poc_photorealistic.py test_photo.jpg")
         print("  python poc_photorealistic.py test_photo.jpg 4")
+        print("  python poc_photorealistic.py test_photo.jpg 4 512  # Fast preview")
         sys.exit(1)
 
     input_path = sys.argv[1]
     num_layers = int(sys.argv[2]) if len(sys.argv) > 2 else 3
+    max_size = int(sys.argv[3]) if len(sys.argv) > 3 else 1024
 
     if num_layers < 2 or num_layers > 5:
         print("❌ Number of layers must be between 2 and 5")
         sys.exit(1)
 
-    main(input_path, num_layers)
+    if max_size < 256 or max_size > 2048:
+        print("❌ max_size must be between 256 and 2048")
+        sys.exit(1)
+
+    main(input_path, num_layers, max_size)

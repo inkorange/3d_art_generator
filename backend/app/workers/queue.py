@@ -34,6 +34,7 @@ def init_queue():
     _worker_thread = threading.Thread(target=_worker_loop, daemon=True)
     _worker_thread.start()
 
+    logger.info(f"Worker thread started: alive={_worker_thread.is_alive()}")
     logger.info("Job queue initialized")
 
 
@@ -74,30 +75,32 @@ def enqueue_job(job_id: str):
 
 def _worker_loop():
     """Worker thread that processes jobs from the queue."""
-    from app.workers.processor import process_job
+    logger.info("Worker thread _worker_loop() started")
 
-    logger.info("Worker thread started")
+    try:
+        from app.workers.processor import process_job
+        logger.info("Successfully imported process_job")
+    except Exception as e:
+        logger.error(f"Failed to import process_job: {e}", exc_info=True)
+        return
+
+    logger.info("Worker thread entering main loop")
 
     while not _shutdown_event.is_set():
         try:
             # Get job from queue with timeout
             job_id = _job_queue.get(timeout=1.0)
 
-            logger.info(f"Processing job: {job_id}")
+            logger.info(f"Picked up job from queue: {job_id}")
 
-            # Process job in a separate process to isolate ML dependencies
-            process = multiprocessing.Process(target=process_job, args=(job_id,))
-            process.start()
-            process.join(timeout=settings.job_timeout_seconds)
-
-            if process.is_alive():
-                logger.error(f"Job {job_id} timed out after {settings.job_timeout_seconds}s")
-                process.terminate()
-                process.join(timeout=5)
-                if process.is_alive():
-                    process.kill()
-
-            logger.info(f"Finished processing job: {job_id}")
+            try:
+                # Run job directly in thread for local development
+                # For production, use a proper task queue like Dramatiq/Celery
+                logger.info(f"Starting to process job: {job_id}")
+                process_job(job_id)
+                logger.info(f"Finished processing job: {job_id}")
+            except Exception as e:
+                logger.error(f"Error processing job {job_id}: {e}", exc_info=True)
 
         except queue.Empty:
             continue

@@ -10,7 +10,7 @@ class Settings(BaseSettings):
     # App Info
     app_name: str = "3D Painterly Image Generator API"
     app_version: str = "0.1.0"
-    debug: bool = True
+    debug: bool = False
 
     # Paths
     base_dir: Path = Path(__file__).parent.parent.parent
@@ -19,9 +19,13 @@ class Settings(BaseSettings):
     jobs_dir: Path = storage_dir / "jobs"
     outputs_dir: Path = storage_dir / "outputs"
     models_dir: Path = base_dir / "models"
+    db_path: Path = storage_dir / "app.db"
 
     # Database
-    database_url: str = "sqlite+aiosqlite:///./storage/app.db"
+    @property
+    def database_url(self) -> str:
+        """Get database URL with absolute path."""
+        return f"sqlite+aiosqlite:///{self.db_path}"
 
     # API Settings
     api_prefix: str = "/api"

@@ -25,6 +25,21 @@ async def lifespan(app: FastAPI):
     # Initialize job queue
     init_queue()
 
+    # Re-queue any pending jobs from previous runs
+    from app.workers.queue import enqueue_job
+    from app.models.job import Job, JobStatus
+    from app.database.base import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as session:
+        from sqlalchemy import select
+        result = await session.execute(
+            select(Job).where(Job.status == JobStatus.PENDING)
+        )
+        pending_jobs = result.scalars().all()
+        for job in pending_jobs:
+            logger.info(f"Re-queueing pending job: {job.id}")
+            enqueue_job(job.id)
+
     logger.info("Application started successfully")
 
     yield

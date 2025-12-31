@@ -6,6 +6,10 @@ __pycache__/
 *.so
 .Python
 
+# Node
+node_modules/
+package-lock.json
+
 # Distribution / packaging
 build/
 dist/

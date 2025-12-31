@@ -6,6 +6,7 @@ import sys
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Optional, Tuple
 
 from loguru import logger
 from sqlalchemy import create_engine
@@ -24,7 +25,8 @@ def process_job(job_id: str):
         job_id: Job ID to process
     """
     # Use sync database in worker process
-    engine = create_engine(settings.database_url.replace("sqlite+aiosqlite", "sqlite"))
+    sync_db_url = f"sqlite:///{settings.db_path}"
+    engine = create_engine(sync_db_url)
     db = Session(engine)
 
     try:
@@ -89,7 +91,7 @@ def process_job(job_id: str):
         db.close()
 
 
-def _run_photorealistic(job: Job, output_dir: Path) -> tuple[bool, dict | None]:
+def _run_photorealistic(job: Job, output_dir: Path) -> Tuple[bool, Optional[dict]]:
     """Run photo-realistic pipeline.
 
     Args:
@@ -109,6 +111,7 @@ def _run_photorealistic(job: Job, output_dir: Path) -> tuple[bool, dict | None]:
             str(script_path),
             job.input_path,
             str(job.num_layers),
+            str(job.max_size),
         ]
 
         # Run pipeline
@@ -149,7 +152,7 @@ def _run_photorealistic(job: Job, output_dir: Path) -> tuple[bool, dict | None]:
         return False, None
 
 
-def _run_painterly(job: Job, output_dir: Path) -> tuple[bool, dict | None]:
+def _run_painterly(job: Job, output_dir: Path) -> Tuple[bool, Optional[dict]]:
     """Run painterly pipeline.
 
     Args:
@@ -171,6 +174,7 @@ def _run_painterly(job: Job, output_dir: Path) -> tuple[bool, dict | None]:
             job.painterly_style or "oil painting",
             str(job.painterly_strength or 0.5),
             str(job.painterly_seed or 42),
+            str(job.max_size),
         ]
 
         # Run pipeline

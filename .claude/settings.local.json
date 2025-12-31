@@ -8,7 +8,20 @@
       "Bash(chmod:*)",
       "Bash(python test_setup.py:*)",
       "Bash(python:*)",
-      "Bash(ls:*)"
+      "Bash(ls:*)",
+      "Bash(source:*)",
+      "Bash(timeout 5 uvicorn:*)",
+      "Bash(npx create-next-app@latest:*)",
+      "Bash(curl:*)",
+      "Bash(npm install)",
+      "Bash(cat:*)",
+      "Bash(npm run build:*)",
+      "Bash(timeout 10 npm run dev)",
+      "Bash(npx tsc:*)",
+      "Bash(npm --prefix frontend run build)",
+      "Bash(npx:*)",
+      "Bash(./validate.sh:*)",
+      "Bash(sqlite3:*)"
     ]
   }
 }
