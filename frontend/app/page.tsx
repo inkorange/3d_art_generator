@@ -21,9 +21,13 @@ export default function Home() {
   const [mode, setMode] = useState<'photo-realistic' | 'painterly'>('photo-realistic');
   const [numLayers, setNumLayers] = useState(4);
   const [maxSize, setMaxSize] = useState(1024);
-  const [painterlyStyle, setPainterlyStyle] = useState('oil painting');
+  const [exportLayers, setExportLayers] = useState(true);
+  const [featherRadius, setFeatherRadius] = useState(2);
+  const [painterlyStyle, setPainterlyStyle] = useState('oil_painting');
   const [painterlyStrength, setPainterlyStrength] = useState(0.5);
   const [painterlySeed, setPainterlySeed] = useState(42);
+  const [useControlNet, setUseControlNet] = useState(false);
+  const [useInpainting, setUseInpainting] = useState(false);
 
   const handleFileUpload = async (file: File) => {
     setError(null);
@@ -59,9 +63,13 @@ export default function Home() {
         mode,
         num_layers: numLayers,
         max_size: maxSize,
+        export_layers: exportLayers,
+        feather_radius: featherRadius,
         painterly_style: mode === 'painterly' ? painterlyStyle : undefined,
         painterly_strength: mode === 'painterly' ? painterlyStrength : undefined,
         painterly_seed: mode === 'painterly' ? painterlySeed : undefined,
+        use_controlnet: mode === 'painterly' ? useControlNet : undefined,
+        use_inpainting: mode === 'photo-realistic' ? useInpainting : undefined,
       });
 
       setCurrentJob(job);
@@ -120,12 +128,20 @@ export default function Home() {
                 onNumLayersChange={setNumLayers}
                 maxSize={maxSize}
                 onMaxSizeChange={setMaxSize}
+                exportLayers={exportLayers}
+                onExportLayersChange={setExportLayers}
+                featherRadius={featherRadius}
+                onFeatherRadiusChange={setFeatherRadius}
                 painterlyStyle={painterlyStyle}
                 onPainterlyStyleChange={setPainterlyStyle}
                 painterlyStrength={painterlyStrength}
                 onPainterlyStrengthChange={setPainterlyStrength}
                 painterlySeed={painterlySeed}
                 onPainterlySeedChange={setPainterlySeed}
+                useControlNet={useControlNet}
+                onUseControlNetChange={setUseControlNet}
+                useInpainting={useInpainting}
+                onUseInpaintingChange={setUseInpainting}
                 onGenerate={handleGenerate}
               />
             )}

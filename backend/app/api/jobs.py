@@ -1,6 +1,7 @@
 """Job API endpoints."""
 
 import shutil
+import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -16,7 +17,21 @@ from app.database.base import get_db
 from app.models.job import Job, JobCreate, JobListResponse, JobMode, JobResponse, JobStatus
 from app.workers.queue import enqueue_job
 
+# Import style presets from ml_pipeline
+sys.path.insert(0, str(settings.ml_pipeline_path))
+from style_presets import get_preset_for_display
+
 router = APIRouter(prefix="/jobs", tags=["jobs"])
+
+
+@router.get("/style-presets", response_model=list[dict])
+async def list_style_presets() -> list[dict]:
+    """List all available style presets for painterly mode.
+
+    Returns:
+        List of style presets with value, label, and description
+    """
+    return get_preset_for_display()
 
 
 @router.post("/upload", response_model=dict)
@@ -73,9 +88,13 @@ async def create_job(
     mode: JobMode = Form(...),
     num_layers: int = Form(default=4),
     max_size: int = Form(default=1024),
-    painterly_style: Optional[str] = Form(default="oil painting"),
+    export_layers: bool = Form(default=True),
+    feather_radius: int = Form(default=2),
+    painterly_style: Optional[str] = Form(default="oil_painting"),
     painterly_strength: Optional[float] = Form(default=0.5),
     painterly_seed: Optional[int] = Form(default=42),
+    use_controlnet: bool = Form(default=False),
+    use_inpainting: bool = Form(default=False),
     db: AsyncSession = Depends(get_db),
 ) -> JobResponse:
     """Create a new generation job.
@@ -114,6 +133,12 @@ async def create_job(
             detail="max_size must be between 256 and 2048",
         )
 
+    if feather_radius < 1 or feather_radius > 5:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="feather_radius must be between 1 and 5",
+        )
+
     if painterly_strength is not None and (painterly_strength < 0.0 or painterly_strength > 1.0):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -127,9 +152,13 @@ async def create_job(
         input_path=str(file_path),
         num_layers=num_layers,
         max_size=max_size,
+        export_layers=export_layers,
+        feather_radius=feather_radius,
         painterly_style=painterly_style if mode == JobMode.PAINTERLY else None,
         painterly_strength=painterly_strength if mode == JobMode.PAINTERLY else None,
         painterly_seed=painterly_seed if mode == JobMode.PAINTERLY else None,
+        use_controlnet=use_controlnet if mode == JobMode.PAINTERLY else False,
+        use_inpainting=use_inpainting if mode == JobMode.PHOTO_REALISTIC else False,
         status=JobStatus.PENDING,
     )
 

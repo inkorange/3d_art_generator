@@ -112,6 +112,9 @@ def _run_photorealistic(job: Job, output_dir: Path) -> Tuple[bool, Optional[dict
             job.input_path,
             str(job.num_layers),
             str(job.max_size),
+            str(job.export_layers).lower(),
+            str(job.feather_radius),
+            str(job.use_inpainting).lower(),
         ]
 
         # Run pipeline
@@ -167,14 +170,17 @@ def _run_painterly(job: Job, output_dir: Path) -> Tuple[bool, Optional[dict]]:
 
         # Build command
         script_path = settings.ml_pipeline_path / "poc_painterly.py"
+        # Convert space-separated style to underscore format (e.g., "oil painting" -> "oil_painting")
+        style = (job.painterly_style or "oil_painting").replace(" ", "_")
         cmd = [
             sys.executable,
             str(script_path),
             job.input_path,
-            job.painterly_style or "oil painting",
+            style,
             str(job.painterly_strength or 0.5),
             str(job.painterly_seed or 42),
             str(job.max_size),
+            str(job.use_controlnet).lower(),
         ]
 
         # Run pipeline

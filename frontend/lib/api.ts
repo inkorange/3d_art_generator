@@ -9,9 +9,13 @@ export interface JobCreate {
   mode: 'photo-realistic' | 'painterly';
   num_layers: number;
   max_size: number;
+  export_layers: boolean;
+  feather_radius: number;
   painterly_style?: string;
   painterly_strength?: number;
   painterly_seed?: number;
+  use_controlnet?: boolean;
+  use_inpainting?: boolean;
 }
 
 export interface Job {
@@ -20,9 +24,13 @@ export interface Job {
   mode: 'photo-realistic' | 'painterly';
   num_layers: number;
   max_size: number;
+  export_layers: boolean;
+  feather_radius: number;
   painterly_style?: string;
   painterly_strength?: number;
   painterly_seed?: number;
+  use_controlnet?: boolean;
+  use_inpainting?: boolean;
   input_filename: string;
   output_dir?: string;
   result_manifest?: LayerManifest;
@@ -60,11 +68,38 @@ export interface UploadResponse {
   path: string;
 }
 
+export interface StylePreset {
+  value: string;
+  label: string;
+  description: string;
+}
+
 class APIClient {
   private baseUrl: string;
 
   constructor(baseUrl: string = API_BASE_URL) {
     this.baseUrl = baseUrl;
+  }
+
+  /**
+   * Get available style presets
+   */
+  async getStylePresets(): Promise<StylePreset[]> {
+    try {
+      const response = await fetch(`${this.baseUrl}/jobs/style-presets`);
+
+      if (!response.ok) {
+        const error = await response.json().catch(() => ({ detail: 'Failed to fetch style presets' }));
+        throw new Error(error.detail || 'Failed to fetch style presets');
+      }
+
+      return response.json();
+    } catch (error) {
+      if (error instanceof TypeError && error.message.includes('fetch')) {
+        throw new Error('Cannot connect to backend. Is the backend running on http://localhost:8000?');
+      }
+      throw error;
+    }
   }
 
   /**
@@ -103,6 +138,8 @@ class APIClient {
     formData.append('mode', params.mode);
     formData.append('num_layers', params.num_layers.toString());
     formData.append('max_size', params.max_size.toString());
+    formData.append('export_layers', params.export_layers.toString());
+    formData.append('feather_radius', params.feather_radius.toString());
 
     if (params.mode === 'painterly') {
       if (params.painterly_style) {
@@ -113,6 +150,15 @@ class APIClient {
       }
       if (params.painterly_seed !== undefined) {
         formData.append('painterly_seed', params.painterly_seed.toString());
+      }
+      if (params.use_controlnet !== undefined) {
+        formData.append('use_controlnet', params.use_controlnet.toString());
+      }
+    }
+
+    if (params.mode === 'photo-realistic') {
+      if (params.use_inpainting !== undefined) {
+        formData.append('use_inpainting', params.use_inpainting.toString());
       }
     }
 

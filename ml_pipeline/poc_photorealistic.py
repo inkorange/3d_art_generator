@@ -15,6 +15,8 @@ import torch
 import numpy as np
 from PIL import Image
 from transformers import DPTImageProcessor, DPTForDepthEstimation
+from transformers import AutoImageProcessor, AutoModelForSemanticSegmentation
+from diffusers import StableDiffusionInpaintPipeline
 import cv2
 
 # Configuration
@@ -81,75 +83,202 @@ def generate_depth_map(image, processor, model):
     return depth_image, depth
 
 
-def generate_subject_masks_grabcut(image, depth_array):
-    """
-    Use GrabCut algorithm to find the main foreground subject.
-    This works well for portraits and images with a clear subject.
-    """
-    print("\n👥 Detecting main subject using GrabCut...")
+def load_segmentation_model():
+    """Load semantic segmentation model for detecting people, animals, objects."""
+    print("\n📥 Loading semantic segmentation model...")
     start = time.time()
 
-    # Convert PIL to numpy RGB
-    img_rgb = np.array(image.convert("RGB"))
+    # Use nvidia/segformer-b5-finetuned-ade-640-640 - excellent for person/object detection
+    model_name = "nvidia/segformer-b5-finetuned-ade-640-640"
+    processor = AutoImageProcessor.from_pretrained(model_name)
+    model = AutoModelForSemanticSegmentation.from_pretrained(model_name)
+    model = model.to(device)
+    model.eval()
 
-    # Initialize mask for GrabCut
-    mask = np.zeros(img_rgb.shape[:2], np.uint8)
-
-    # Background and foreground models (required by GrabCut)
-    bgd_model = np.zeros((1, 65), np.float64)
-    fgd_model = np.zeros((1, 65), np.float64)
-
-    # Define initial rectangle around likely subject area
-    # Use depth to find the closest regions as initial estimate
-    foreground_threshold = np.percentile(depth_array, 66)  # Top 33% closest
-    likely_fg = depth_array > foreground_threshold
-
-    # Find bounding box of likely foreground
-    rows = np.any(likely_fg, axis=1)
-    cols = np.any(likely_fg, axis=0)
-    if rows.any() and cols.any():
-        rmin, rmax = np.where(rows)[0][[0, -1]]
-        cmin, cmax = np.where(cols)[0][[0, -1]]
-
-        # Add margin
-        h, w = img_rgb.shape[:2]
-        margin = 20
-        rect = (
-            max(0, cmin - margin),
-            max(0, rmin - margin),
-            min(w - cmin, cmax - cmin + 2 * margin),
-            min(h - rmin, rmax - rmin + 2 * margin)
-        )
-
-        # Run GrabCut
-        try:
-            cv2.grabCut(img_rgb, mask, rect, bgd_model, fgd_model, 5, cv2.GC_INIT_WITH_RECT)
-
-            # Create binary mask where 0,2=background, 1,3=foreground
-            subject_mask = np.where((mask == 2) | (mask == 0), 0, 1).astype(np.int32)
-
-            # Check if we found a subject
-            subject_count = 1 if subject_mask.sum() > (depth_array.size * 0.05) else 0
-
-            print(f"✅ Subject detection completed in {time.time() - start:.2f}s")
-            print(f"   Found subject covering {subject_mask.sum() / depth_array.size * 100:.1f}% of image")
-
-            return subject_mask, subject_count
-
-        except Exception as e:
-            print(f"   GrabCut failed: {e}, falling back to no subject detection")
-            return np.zeros_like(depth_array, dtype=np.int32), 0
-    else:
-        print(f"   Could not find foreground region, skipping subject detection")
-        return np.zeros_like(depth_array, dtype=np.int32), 0
+    print(f"✅ Segmentation model loaded in {time.time() - start:.2f}s")
+    return processor, model
 
 
-def separate_into_layers(image, depth_array, num_layers=3, subject_mask=None):
+def inpaint_background_opencv(image, subject_mask):
+    """
+    Use OpenCV NS (Navier-Stokes) inpainting for better background filling.
+    Slower than Telea (~1-2s vs ~0.5s) but significantly better quality.
+
+    Args:
+        image: PIL Image - original image
+        subject_mask: numpy array - binary mask where 1=subject, 0=background
+
+    Returns:
+        PIL Image - background with subjects inpainted
+    """
+    print("\n🎨 Inpainting background with OpenCV NS algorithm...")
+    start = time.time()
+
+    # Convert to numpy arrays
+    img_np = np.array(image.convert("RGB"))
+    mask_np = (subject_mask > 0).astype(np.uint8) * 255
+
+    # Dilate mask slightly to ensure complete coverage
+    kernel = np.ones((5, 5), np.uint8)
+    mask_dilated = cv2.dilate(mask_np, kernel, iterations=3)
+
+    # Use cv2.INPAINT_NS (Navier-Stokes) for better quality inpainting
+    inpainted = cv2.inpaint(img_np, mask_dilated, inpaintRadius=10, flags=cv2.INPAINT_NS)
+
+    # Convert back to PIL
+    result = Image.fromarray(inpainted)
+
+    print(f"✅ Background inpainted in {time.time() - start:.2f}s")
+    return result
+
+
+def load_inpainting_model():
+    """Load Stable Diffusion inpainting model for highest quality background filling."""
+    print("\n📥 Loading SD inpainting model (slow but highest quality)...")
+    start = time.time()
+
+    pipe = StableDiffusionInpaintPipeline.from_pretrained(
+        "runwayml/stable-diffusion-inpainting",
+        torch_dtype=torch.float16 if device.type == "cuda" else torch.float32,
+        safety_checker=None,
+    )
+    pipe = pipe.to(device)
+
+    print(f"✅ Inpainting model loaded in {time.time() - start:.2f}s")
+    return pipe
+
+
+def inpaint_background_sd(image, subject_mask, inpaint_pipe):
+    """
+    Use Stable Diffusion inpainting for highest quality background filling.
+    Much slower than OpenCV (~5-7s) but better quality.
+
+    Args:
+        image: PIL Image - original image
+        subject_mask: numpy array - binary mask where 1=subject, 0=background
+        inpaint_pipe: Stable Diffusion inpainting pipeline
+
+    Returns:
+        PIL Image - background with subjects inpainted
+    """
+    print("\n🎨 Inpainting background with Stable Diffusion...")
+    start = time.time()
+
+    # Convert subject mask to PIL Image
+    mask_img = Image.fromarray((subject_mask > 0).astype(np.uint8) * 255)
+
+    # Inpaint the masked areas
+    prompt = "natural scenery, background, seamless, photorealistic, high quality"
+    negative_prompt = "people, person, human, animal, text, watermark, blurry"
+
+    result = inpaint_pipe(
+        prompt=prompt,
+        negative_prompt=negative_prompt,
+        image=image,
+        mask_image=mask_img,
+        num_inference_steps=30,
+        guidance_scale=7.5,
+    ).images[0]
+
+    print(f"✅ Background inpainted in {time.time() - start:.2f}s")
+    return result
+
+
+def detect_subjects_semantic(image, processor, model):
+    """
+    Use semantic segmentation to detect people, animals, and key objects.
+    Each detected subject gets a unique ID in the returned mask.
+
+    Returns:
+        subject_mask: numpy array where 0=background, 1=subject1, 2=subject2, etc.
+        subject_count: number of subjects detected
+    """
+    print("\n👥 Detecting subjects using semantic segmentation...")
+    start = time.time()
+
+    # Process image
+    inputs = processor(images=image, return_tensors="pt")
+    inputs = {k: v.to(device) for k, v in inputs.items()}
+
+    # Run segmentation
+    with torch.no_grad():
+        outputs = model(**inputs)
+        logits = outputs.logits
+
+    # Resize to original image size
+    h, w = image.size[1], image.size[0]
+    segmentation = torch.nn.functional.interpolate(
+        logits,
+        size=(h, w),
+        mode="bilinear",
+        align_corners=False
+    )
+
+    # Get the class predictions
+    seg_map = segmentation.argmax(dim=1)[0].cpu().numpy()
+
+    # ADE20K class IDs for subjects we want to isolate
+    # 12 = person, 13 = animal/dog/cat, 20 = car, 6 = building, etc.
+    # Priority classes that should be isolated on their own layer
+    SUBJECT_CLASSES = {
+        12: "person",      # People - highest priority
+        13: "animal",      # Animals
+        17: "dog",
+        18: "cat",
+        19: "bird",
+        20: "car",
+        21: "truck",
+        26: "horse",
+        62: "statue",
+        72: "bicycle",
+        85: "bottle",
+        88: "vase"
+    }
+
+    # Create subject mask with unique IDs for each detected object
+    subject_mask = np.zeros_like(seg_map, dtype=np.int32)
+    subject_id = 1
+    subject_info = []
+
+    # Find each subject class in the image
+    for class_id, class_name in SUBJECT_CLASSES.items():
+        class_mask = (seg_map == class_id)
+
+        if class_mask.sum() > (seg_map.size * 0.01):  # At least 1% of image
+            # Use connected components to separate multiple instances
+            num_labels, labels = cv2.connectedComponents(class_mask.astype(np.uint8))
+
+            # Process each connected component (each separate object)
+            for component_id in range(1, num_labels):  # Skip 0 (background)
+                component_mask = (labels == component_id)
+                component_size = component_mask.sum()
+
+                # Only keep significant components (>0.5% of image)
+                if component_size > (seg_map.size * 0.005):
+                    subject_mask[component_mask] = subject_id
+                    coverage = component_size / seg_map.size * 100
+                    subject_info.append({
+                        "id": subject_id,
+                        "class": class_name,
+                        "coverage": coverage
+                    })
+                    print(f"   Subject {subject_id}: {class_name} ({coverage:.1f}% of image)")
+                    subject_id += 1
+
+    subject_count = subject_id - 1
+
+    print(f"✅ Subject detection completed in {time.time() - start:.2f}s")
+    print(f"   Found {subject_count} subjects")
+
+    return subject_mask, subject_count
+
+
+def separate_into_layers(image, depth_array, num_layers=3, subject_mask=None, feather_radius=2, inpainted_background=None):
     """
     Separate image into depth-based layers with alpha transparency.
     Uses semantic segmentation to keep subjects together on the same layer.
 
-    IMPORTANT: Background layer (Layer 1) is fully opaque with blurred fallback
+    IMPORTANT: Background layer (Layer 1) uses AI-inpainted background or blurred fallback
     to prevent transparent holes when viewed from angles in physical prints.
 
     Args:
@@ -157,6 +286,8 @@ def separate_into_layers(image, depth_array, num_layers=3, subject_mask=None):
         depth_array: Depth map as numpy array
         num_layers: Number of layers to create
         subject_mask: Optional semantic segmentation mask where each subject has unique ID
+        feather_radius: Radius for feathering edges
+        inpainted_background: Optional AI-inpainted background image (PIL Image)
     """
     print(f"\n🔪 Separating into {num_layers} depth layers...")
     start = time.time()
@@ -165,9 +296,14 @@ def separate_into_layers(image, depth_array, num_layers=3, subject_mask=None):
     image_rgba = image.convert("RGBA")
     img_array = np.array(image_rgba)
 
-    # Create blurred version for background layer fallback
-    img_rgb = np.array(image.convert("RGB"))
-    blurred_img = cv2.GaussianBlur(img_rgb, (21, 21), 10)  # Heavy blur for fallback
+    # Use inpainted background if available, otherwise use blurred fallback
+    if inpainted_background is not None:
+        background_img = np.array(inpainted_background.convert("RGB"))
+        print(f"   Using AI-inpainted background")
+    else:
+        img_rgb = np.array(image.convert("RGB"))
+        background_img = cv2.GaussianBlur(img_rgb, (21, 21), 10)  # Heavy blur for fallback
+        print(f"   Using blurred background fallback")
 
     layers = []
     layer_info = []
@@ -232,7 +368,7 @@ def separate_into_layers(image, depth_array, num_layers=3, subject_mask=None):
         coverage = (mask > 0).sum() / mask.size * 100
 
         # Apply feathering (Gaussian blur on mask)
-        feather_radius = 2  # 2-pixel feather
+        # Use configurable feather radius
         mask_feathered = cv2.GaussianBlur(mask, (5, 5), feather_radius)
 
         # SPECIAL HANDLING FOR BACKGROUND LAYER (Layer 1)
@@ -242,7 +378,7 @@ def separate_into_layers(image, depth_array, num_layers=3, subject_mask=None):
             layer = np.zeros((img_array.shape[0], img_array.shape[1], 4), dtype=np.uint8)
 
             # Start with full blurred image
-            layer[:, :, :3] = blurred_img
+            layer[:, :, :3] = background_img
 
             # Create inverse mask - everything NOT in foreground/midground layers
             # This means: blur everything except what's actually in this background layer
@@ -320,8 +456,13 @@ def save_layer_manifest(layer_info, job_id):
     return manifest_path
 
 
-def main(input_image_path, num_layers=3, max_size=1024):
-    """Main pipeline: Image -> Depth -> Layers (no AI transformation)."""
+def main(input_image_path, num_layers=3, max_size=1024, export_layers=True, feather_radius=2, use_inpainting=False):
+    """Main pipeline: Image -> Depth -> Layers (no AI transformation).
+
+    Args:
+        use_inpainting: If True, use AI inpainting for background (slower but higher quality).
+                       If False, use Gaussian blur (10x faster, default).
+    """
     print("=" * 60)
     print("🎨 Photo-Realistic Depth Layer Generator")
     print("=" * 60)
@@ -359,26 +500,64 @@ def main(input_image_path, num_layers=3, max_size=1024):
     elif device.type == "cuda":
         torch.cuda.empty_cache()
 
-    # Step 1.5: Detect main subject using GrabCut
-    subject_mask, subject_count = generate_subject_masks_grabcut(image, depth_array)
+    # Step 1.5: Detect subjects using semantic segmentation
+    seg_processor, seg_model = load_segmentation_model()
+    subject_mask, subject_count = detect_subjects_semantic(image, seg_processor, seg_model)
 
-    # Step 2: Separate into layers with subject-aware processing
-    layers, layer_info = separate_into_layers(image, depth_array, num_layers, subject_mask)
+    # Clear segmentation model from memory
+    del seg_model, seg_processor
+    if device.type == "mps":
+        torch.mps.empty_cache()
+    elif device.type == "cuda":
+        torch.cuda.empty_cache()
 
-    # Step 3: Save composite (full image with alpha)
+    # Step 1.6: Optionally inpaint background if subjects were detected
+    inpainted_background = None
+    if use_inpainting and subject_count > 0:
+        # Use Stable Diffusion inpainting (highest quality, ~50s)
+        print("\n✨ AI background fill enabled (Stable Diffusion)")
+        inpaint_pipe = load_inpainting_model()
+        inpainted_background = inpaint_background_sd(image, subject_mask, inpaint_pipe)
+
+        # Clear inpainting model from memory
+        del inpaint_pipe
+        if device.type == "mps":
+            torch.mps.empty_cache()
+        elif device.type == "cuda":
+            torch.cuda.empty_cache()
+
+        # Save inpainted background for reference
+        inpainted_bg_path = OUTPUT_DIR / "02b_inpainted_background.png"
+        inpainted_background.save(inpainted_bg_path)
+        print(f"   Saved: {inpainted_bg_path}")
+    elif not use_inpainting and subject_count > 0:
+        print("\n💨 Using fast Gaussian blur for background (use_inpainting=False)")
+
+    print(f"\n💾 Saving outputs...")
+
+    # Save composite (full image with alpha)
     composite_path = OUTPUT_DIR / "03_composite_full.png"
     image.save(composite_path)
-    print(f"\n💾 Saving outputs...")
     print(f"   Saved: {composite_path}")
 
-    # Step 4: Save individual layers
-    for i, (layer, info) in enumerate(zip(layers, layer_info)):
-        layer_path = OUTPUT_DIR / info["name"]
-        layer.save(layer_path)
-        print(f"   Saved: {layer_path} (depth: {info['depth_range']})")
+    # Conditionally export layers
+    if export_layers:
+        # Step 2: Separate into layers with subject-aware processing
+        layers, layer_info = separate_into_layers(image, depth_array, num_layers, subject_mask, feather_radius, inpainted_background)
 
-    # Step 5: Save manifest
-    manifest_path = save_layer_manifest(layer_info, "photorealistic_test")
+        # Step 3: Save individual layers
+        for i, (layer, info) in enumerate(zip(layers, layer_info)):
+            layer_path = OUTPUT_DIR / info["name"]
+            layer.save(layer_path)
+            print(f"   Saved: {layer_path} (depth: {info['depth_range']})")
+
+        # Step 4: Save manifest
+        manifest_path = save_layer_manifest(layer_info, "photorealistic_test")
+    else:
+        print(f"   Skipping layer export (export_layers=False)")
+        layers = []
+        layer_info = []
+        manifest_path = None
 
     # Summary
     print("\n" + "=" * 60)
@@ -397,16 +576,21 @@ def main(input_image_path, num_layers=3, max_size=1024):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python poc_photorealistic.py <input_image_path> [num_layers] [max_size]")
+        print("Usage: python poc_photorealistic.py <input_image_path> [num_layers] [max_size] [export_layers] [feather_radius] [use_inpainting]")
         print("\nExample:")
         print("  python poc_photorealistic.py test_photo.jpg")
-        print("  python poc_photorealistic.py test_photo.jpg 4")
-        print("  python poc_photorealistic.py test_photo.jpg 4 512  # Fast preview")
+        print("  python poc_photorealistic.py test_photo.jpg 4 1024 true 2 false  # Fast (default)")
+        print("  python poc_photorealistic.py test_photo.jpg 4 1024 true 2 true   # High quality (10x slower)")
+        print("  python poc_photorealistic.py test_photo.jpg 4 512 true 3  # Fast preview with 3px feathering")
+        print("  python poc_photorealistic.py test_photo.jpg 3 1024 false 2  # No layer export")
         sys.exit(1)
 
     input_path = sys.argv[1]
     num_layers = int(sys.argv[2]) if len(sys.argv) > 2 else 3
     max_size = int(sys.argv[3]) if len(sys.argv) > 3 else 1024
+    export_layers = sys.argv[4].lower() == 'true' if len(sys.argv) > 4 else True
+    feather_radius = int(sys.argv[5]) if len(sys.argv) > 5 else 2
+    use_inpainting = sys.argv[6].lower() == 'true' if len(sys.argv) > 6 else False
 
     if num_layers < 2 or num_layers > 5:
         print("❌ Number of layers must be between 2 and 5")
@@ -416,4 +600,8 @@ if __name__ == "__main__":
         print("❌ max_size must be between 256 and 2048")
         sys.exit(1)
 
-    main(input_path, num_layers, max_size)
+    if feather_radius < 1 or feather_radius > 5:
+        print("❌ feather_radius must be between 1 and 5")
+        sys.exit(1)
+
+    main(input_path, num_layers, max_size, export_layers, feather_radius, use_inpainting)
